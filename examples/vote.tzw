@@ -57,10 +57,10 @@ end
 scope Unknown
 
   predicate pre (c : ctx) =
-    sum_of c.vote_storage.Vote.result >= c.vote_balance * 500
+    (sum_of c.vote_storage.Vote.result) * 500 <= c.vote_balance
 
   predicate post (c : ctx) (c' : ctx) =
-    sum_of c'.vote_storage.Vote.result >= c'.vote_balance * 500
+    (sum_of c'.vote_storage.Vote.result) * 500 <= c'.vote_balance
 
   scope Entrypoint
 
