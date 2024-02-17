@@ -1,0 +1,173 @@
+(* Based on https://github.com/Hover-Labs/kolibri-contracts/blob/master/smart_contracts/ *)
+
+scope Preambles
+  use export int.Int
+  use export int.Abs
+  use export int.EuclideanDivision
+  use export list.List
+  use export option.Option
+  use export map.Map
+  use export map.Const
+
+  exception Insufficient_mutez
+  exception Terminate
+
+  type nat = int
+
+  type mutez = int
+
+  type address = int
+
+  type key_hash = int
+
+  type timestamp = int
+
+  type contract 'a = int
+
+  type or 'a 'b = Left 'a | Right 'b
+
+  type step = (address, address, address, mutez)
+
+  function mk_step (source : address) (sender : address) (self : address) (amount : mutez) : step =
+    (source, sender, self, amount)
+
+  function source (st : step) : address =
+    match st with x, _, _, _ -> x end
+
+  function sender (st : step) : address =
+    match st with _, x, _, _ -> x end
+
+  function self (st : step) : address =
+    match st with _, _, x, _ -> x end
+
+  function amount (st : step) : mutez =
+    match st with  _, _, _, x -> x end
+
+  predicate st_wf (st : step) =
+    st.amount >= 0
+
+  function sum_of : map address mutez -> mutez
+
+  axiom SumE : sum_of (const 0) = 0
+
+  axiom SumI : forall m k v. sum_of m[k <- v] = sum_of m + v - m[k]
+
+  axiom SumN : forall m k. m[k] <= sum_of m
+
+end
+
+scope Unknown
+
+  predicate pre (c : ctx) = true
+
+  predicate post (c : ctx) (c' : ctx) = true
+  scope Entrypoint
+
+    predicate default unit
+
+    predicate isOven address
+
+    predicate getXtzUsdRate (contract nat)
+
+    predicate borrow unit
+
+  end
+end
+
+scope Oven
+
+  type storage = {
+    owner : address;
+    ovenProxyContractAddress : address;
+  }
+
+  let upper_ops = 1
+
+  predicate pre (c : ctx) = inv_pre c
+
+  predicate post (_st : step) (_gp : gparam) (c : ctx) (c' : ctx) = inv_post c c'
+
+  scope Spec
+
+  predicate borrow (st : step) (tokensToBorrow : nat) (s : storage) (ops : list operation) (s' : storage) =
+    let v_MUTEZ_TO_KOLIBRI_CONVERSION = 1000000000000 in
+    s.owner = st.sender /\
+    st.amount = 0 /\
+    let normalizedBalance = oven_balance * v_MUTEZ_TO_KOLIBRI_CONVERSION in
+    let param =
+      (st.self,
+      (s.owner,
+      (normalizedBalance,
+      (s.borrowedTokens,
+      (s.isLiquidated,
+      (s.stabilityFeeTokens,
+      (s.interestIndex,
+       tokensToBorrow)))))))
+    in
+    ops = Cons (Xfer (Gp'OvenProxy'borrow param) oven_balance s.ovenProxyContractAddress) Nil
+  end
+end
+
+scope OvenProxy
+
+  type storage = {
+    owner : address;
+    ovenProxyContractAddress : address;
+  }
+
+  let upper_ops = 1
+
+  predicate pre (c : ctx) = inv_pre c
+
+  predicate post (_st : step) (_gp : gparam) (c : ctx) (c' : ctx) = inv_post c c'
+
+  scope Spec
+
+  predicate borrow (st : step) (param) (s : storage) (ops : list operation) (s' : storage) =
+    let verifyIsOven s ovenAddress acc =
+      Cons (Xfer (Gp'Unknown'isOven ovenAddress) 0 s.ovenRegistryContractAddress) acc
+    in
+    let callOracleWithCallback entrypoint acc =
+      Cons (Xfer (Gp'Oracele'getXtzUsdRate entrypoint ) 0 s.oracleContractAddress) acc
+    in
+    s.owner = st.sender /\
+    st.amount = 0 /\
+    let nops = verifyIsOven s st.sender Nil in
+    s.paused = false /\
+    s.state = IDLE /\
+    s' = { s with
+           state = BORROW_WAITING_FOR_ORACLE;
+           borrowParams = Some(param) } /\
+    ops = callOracleWithCallback nops Gp'OvenProxy'borrow_callback
+  end
+
+
+end
+
+scope Oracle
+
+  type storage = {
+    state: nat;
+  }
+
+  let upper_ops = 1
+
+  predicate pre (c : ctx) = inv_pre c
+
+  predicate post (_st : step) (_gp : gparam) (c : ctx) (c' : ctx) = inv_post c c'
+
+  scope Spec
+    predicate getXtzUsdRate (st : step) (callback) (s : storage) (ops : list operation) (s' : storage) =
+      state = IDLE /\
+      st.amount = 0 /\
+      ops = {
+        ops with
+        state = WAITING_FOR_HARBINGER;
+        clientCallback = callback;
+      } /\
+      let param = (Constants.ASSET_CODE, Gp'Harbinger'getXtzUsdRate_callback) in
+      ops = Cons (Xfer (Gp'Harbinger'get param) 0 s.harbingerContractAddress) Nil
+  end
+
+  predicate getXtzUsdRate_callback (st : step) (callback) (s : storage) (ops : list operation) (s' : storage) =
+end
