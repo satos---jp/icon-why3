@@ -1,0 +1,114 @@
+(* Based on https://github.com/Hover-Labs/kolibri-contracts/blob/master/smart_contracts/ *)
+
+scope Postambles
+
+  let SECONDS_PER_COMPOUND = 60
+
+  let PRECISION = 1000000000000000000
+
+  let compoundWithLinearApproximation
+    initialValue stabilityFee numPeriods =
+    (initialValue * (PRECISION + (numPeriods * stabilityFee))) // PRECISION
+
+  let calculateNewAccruedInterest
+    ovenInterestIndex
+    borrowedTokens
+    stabilityFeeTokens
+    minterInterestIndex =
+    let ratio =
+      (minterInterestIndex * PRECISION) // ovenInterestIndex
+    in
+    let totalPrinciple = borrowedTokens + stabilityFeeTokens in
+    let newTotalTokens = (ratio * totalPrinciple) // PRECISION in
+    let newTokensAccruedAsFee = newTotalTokens - totalPrinciple in
+    newTokensAccruedAsFee
+  
+  predicate pre_inv (_c : ctx) = true
+
+  predicate post_minter_inv (_st : step) (_gp : gparam) (_c : ctx) (_c' : ctx) = true
+end
+
+scope Minter
+
+  type storage = {
+    lastInterestIndexUpdateTime: nat;
+
+  }
+
+  let upper_ops = 1
+
+  predicate pre (c : ctx) = pre_inv c
+
+  predicate post (st : step) (gp : gparam) (c : ctx) (c' : ctx) = post_minter_inv st gp c c'
+
+  scope Spec
+
+    predicate oracle (st : step)
+      (oraclePrice : nat)
+      (ovenAddress : address)
+      (ownerAddress : address)
+      (ovenBalance : nat)
+      (borrowedTokens : nat)
+      (isLiquidated : bool)
+      (stabilityFeeTokens : nat)
+      (interestIndex : int)
+      (tokensToBorrow : nat)
+      (s : storage) (ops : list operation) (s' : storage) =
+
+
+
+      (* Calculate new interest indices for the minter and the oven. *)
+      let timeDeltaSeconds = st.now - s.lastInterestIndexUpdateTime in
+      let numPeriods = timeDeltaSeconds // SECONDS_PER_COMPOUND in
+      let newMinterInterestIndex =
+        compoundWithLinearApproximation s.interestIndex s.stabilityFee numPeriods
+      in
+
+      (* # Disallow repay operations on liquidated ovens. *)
+      isLiquidated = false /\ 
+      
+      (* # Calculate newly accrued stability fees and determine total fees. *)
+      let accruedStabilityFeeTokens = self.calculateNewAccruedInterest
+        interestIndex
+        borrowedTokens
+        stabilityFeeTokens
+        newMinterInterestIndex
+      in
+      let newStabilityFeeTokens = stabilityFeeTokens + accruedStabilityFeeTokens in
+
+      (* # Compute new borrowed amount. *)
+      let newTotalBorrowedTokens = borrowedTokens + tokensToBorrow in
+
+      (* # Verify the oven is not under-collateralized. *)
+      let totalOutstandingTokens = newTotalBorrowedTokens + newStabilityFeeTokens in
+      (if totalOutstandingTokens > 0 then
+        let newCollateralizationPercentage = 
+          computeCollateralizationPercentage
+            ovenBalance
+            oraclePrice
+            totalOutstandingTokens
+        newCollateralizationPercentage >= self.data.collateralizationPercentage
+        in
+      else true) /\
+
+      (* # Call mint in token contract *)
+      self.mintTokens(tokensToBorrow, ownerAddress)
+
+        # Inform oven of new state.
+        self.updateOvenState(ovenAddress, newTotalBorrowedTokens, newStabilityFeeTokens, newMinterInterestIndex, isLiquidated, sp.balance)
+
+        # Update internal state
+        self.data.interestIndex = newMinterInterestIndex
+        self.data.lastInterestIndexUpdateTime = self.data.lastInterestIndexUpdateTime.add_seconds(sp.to_int(numPeriods * Constants.SECONDS_PER_COMPOUND))
+
+  end
+
+end
+
+(*
+
+
+
+
+
+*)
