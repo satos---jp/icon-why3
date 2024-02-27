@@ -1,83 +1,182 @@
 (* Based on https://github.com/Hover-Labs/kolibri-contracts/blob/master/smart_contracts/ *)
 
-scope Postambles
+scope Middleambles
 
-  let SECONDS_PER_COMPOUND = 60
+  constant v_SECONDS_PER_COMPOUND : nat = 60
 
-  let PRECISION = 1000000000000000000
+  constant v_PRECISION : nat = 1000000000000000000
 
-  let compoundWithLinearApproximation
-    initialValue stabilityFee numPeriods =
-    (initialValue * (PRECISION + (numPeriods * stabilityFee))) // PRECISION
+  constant v_MUTEZ_TO_KOLIBRI_CONVERSION : nat = 1000000000000
 
-  let calculateNewAccruedInterest
-    ovenInterestIndex
-    borrowedTokens
-    stabilityFeeTokens
-    minterInterestIndex =
+  constant v_now : nat = 1
+
+  function (/) (x : nat) (y : nat) : nat = div x y
+
+  function compoundWithLinearApproximation
+    (initialValue : nat)
+    (stabilityFee : nat)
+    (numPeriods : nat) : nat =
+    (initialValue * (v_PRECISION + (numPeriods * stabilityFee))) / v_PRECISION
+
+  function calculateNewAccruedInterest
+    (ovenInterestIndex : nat)
+    (borrowedTokens : nat)
+    (stabilityFeeTokens : nat)
+    (minterInterestIndex  : nat) : nat =
     let ratio =
-      (minterInterestIndex * PRECISION) // ovenInterestIndex
+      (minterInterestIndex * v_PRECISION) / ovenInterestIndex
     in
     let totalPrinciple = borrowedTokens + stabilityFeeTokens in
-    let newTotalTokens = (ratio * totalPrinciple) // PRECISION in
+    let newTotalTokens = (ratio * totalPrinciple) / v_PRECISION in
     let newTokensAccruedAsFee = newTotalTokens - totalPrinciple in
     newTokensAccruedAsFee
+
+  function computeCollateralizationPercentage
+    (ovenBalance : nat)
+    (xtzPrice : nat)
+    (borrowedTokens : nat) : nat =
+    (* # Compute collateral value. *)
+    let collateralValue = ovenBalance * xtzPrice / v_PRECISION in
+    let ratio = (collateralValue * v_PRECISION) / borrowedTokens in
+    ratio * 100
+
+  type minter_storage [@gen_wf] = {
+    tokenContractaddr : address;
+    developerFundContractAddress : address;
+    stabilityFundContractAddress : address;
+    ownerAddress : address;
+    liquidityPoolContractAddress : address;
+
+    isLiquidated : bool;
+    devFundSplit : nat;
+    privateOwnerLiquidationThreshold : nat;
+    liquidationFeePercent : nat;
+
+    lastInterestIndexUpdateTime : nat;
+    stabilityFee : nat;
+    collateralizationPercentage : nat;
+    borrowedTokens : nat;
+    stabilityFeeTokens : nat;
+    interestIndex : nat;
+  }
+
+  predicate is_minter_storage_wf (_v: minter_storage) =
+    ((is_nat_wf (_v.interestIndex)) /\
+       ((is_nat_wf (_v.stabilityFeeTokens)) /\
+          ((is_nat_wf (_v.borrowedTokens)) /\
+             ((is_nat_wf (_v.collateralizationPercentage)) /\
+                ((is_nat_wf (_v.stabilityFee)) /\
+                   ((is_nat_wf (_v.lastInterestIndexUpdateTime)) /\
+                      ((is_nat_wf (_v.liquidationFeePercent)) /\
+                         ((is_nat_wf (_v.privateOwnerLiquidationThreshold)) /\
+                            ((is_nat_wf (_v.devFundSplit)) /\
+                               ((is_bool_wf (_v.isLiquidated)) /\
+                                  ((is_address_wf
+                                      (_v.liquidityPoolContractAddress)) /\
+                                     ((is_address_wf (_v.ownerAddress)) /\
+                                        ((is_address_wf
+                                            (_v.stabilityFundContractAddress)) /\
+                                           ((is_address_wf
+                                               (_v.developerFundContractAddress)) /\
+                                              ((is_address_wf
+                                                  (_v.tokenContractaddr)) /\
+                                                 true)))))))))))))))
   
+  function mintTokens
+    (s : minter_storage)
+    (ops : list operation)
+    (tokensToMint : nat)
+    (ownerAddress : address) : list operation =
+    Cons (Xfer (Gp'0mint'0address4nat ownerAddress tokensToMint) 0 s.tokenContractaddr) ops
+
+  function mintTokensToStabilityAndDevFund
+    (s : minter_storage)
+    (ops : list operation)
+    (tokensToMint : nat) : list operation =
+
+    (* # Determine proportion of tokens minted to dev fund. *)
+    let tokensForDevFund = (tokensToMint * s.devFundSplit) / v_PRECISION in
+    let tokensForStabilityFund = tokensToMint - tokensForDevFund in
+
+    let ops = mintTokens s ops tokensForDevFund s.developerFundContractAddress in
+    let ops = mintTokens s ops tokensForStabilityFund s.stabilityFundContractAddress in
+    ops
+
+  function burnTokens
+    (s : minter_storage)
+    (ops : list operation)
+    (tokensToBurn : nat)
+    (address : address) : list operation =
+    Cons (Xfer (Gp'0burn'0address4nat address tokensToBurn) 0 s.tokenContractaddr) ops
+
+  type t_NatNatNat = NatNatNat nat nat nat
+end
+
+scope Postambles
+
   predicate pre_inv (_c : ctx) = true
 
   predicate post_minter_inv (_st : step) (_gp : gparam) (_c : ctx) (_c' : ctx) = true
+
+  predicate post_tokenContract_inv (_st : step) (_gp : gparam) (_c : ctx) (_c' : ctx) = true
+
+end
+
+scope Unknown
+
+  predicate pre (_c : ctx) = true
+
+  predicate post (_c : ctx) (_c' : ctx) = true
+
+  scope Entrypoint
+
+    predicate default unit
+
+  end
+
 end
 
 scope Minter
 
-  type storage = {
-    lastInterestIndexUpdateTime: nat;
+  type storage [@gen_wf] = minter_storage
 
-  }
+  let upper_ops = 4
 
-  let upper_ops = 1
-
-  predicate pre (c : ctx) = pre_inv c
+  predicate pre (_st : step) (_gp : gparam) (c : ctx) = pre_inv c
 
   predicate post (st : step) (gp : gparam) (c : ctx) (c' : ctx) = post_minter_inv st gp c c'
 
   scope Spec
 
-    predicate oracle (st : step)
+    predicate borrow (_st : step)
       (oraclePrice : nat)
-      (ovenAddress : address)
-      (ownerAddress : address)
       (ovenBalance : nat)
-      (borrowedTokens : nat)
-      (isLiquidated : bool)
-      (stabilityFeeTokens : nat)
-      (interestIndex : int)
       (tokensToBorrow : nat)
       (s : storage) (ops : list operation) (s' : storage) =
 
-
+      (* let ovenBalance = minter_balance * v_MUTEZ_TO_KOLIBRI_CONVERSION in *)
 
       (* Calculate new interest indices for the minter and the oven. *)
-      let timeDeltaSeconds = st.now - s.lastInterestIndexUpdateTime in
-      let numPeriods = timeDeltaSeconds // SECONDS_PER_COMPOUND in
+      let timeDeltaSeconds = v_now - s.lastInterestIndexUpdateTime in
+      let numPeriods = timeDeltaSeconds / v_SECONDS_PER_COMPOUND in
       let newMinterInterestIndex =
         compoundWithLinearApproximation s.interestIndex s.stabilityFee numPeriods
       in
 
       (* # Disallow repay operations on liquidated ovens. *)
-      isLiquidated = false /\ 
+      s.isLiquidated = false /\
       
       (* # Calculate newly accrued stability fees and determine total fees. *)
-      let accruedStabilityFeeTokens = self.calculateNewAccruedInterest
-        interestIndex
-        borrowedTokens
-        stabilityFeeTokens
+      let accruedStabilityFeeTokens = calculateNewAccruedInterest
+        s.interestIndex
+        s.borrowedTokens
+        s.stabilityFeeTokens
         newMinterInterestIndex
       in
-      let newStabilityFeeTokens = stabilityFeeTokens + accruedStabilityFeeTokens in
+      let newStabilityFeeTokens = s.stabilityFeeTokens + accruedStabilityFeeTokens in
 
       (* # Compute new borrowed amount. *)
-      let newTotalBorrowedTokens = borrowedTokens + tokensToBorrow in
+      let newTotalBorrowedTokens = s.borrowedTokens + tokensToBorrow in
 
       (* # Verify the oven is not under-collateralized. *)
       let totalOutstandingTokens = newTotalBorrowedTokens + newStabilityFeeTokens in
@@ -87,22 +186,203 @@ scope Minter
             ovenBalance
             oraclePrice
             totalOutstandingTokens
-        newCollateralizationPercentage >= self.data.collateralizationPercentage
         in
+        newCollateralizationPercentage >= s.collateralizationPercentage
       else true) /\
-
+      let nops = Nil in
       (* # Call mint in token contract *)
-      self.mintTokens(tokensToBorrow, ownerAddress)
+      let nops = mintTokens s nops tokensToBorrow s.ownerAddress in
+      
+      s' = {
+        s with
+        (* # Inform oven of new state. *)
+        borrowedTokens = newTotalBorrowedTokens;
+        stabilityFeeTokens = newStabilityFeeTokens;
 
-        # Inform oven of new state.
-        self.updateOvenState(ovenAddress, newTotalBorrowedTokens, newStabilityFeeTokens, newMinterInterestIndex, isLiquidated, sp.balance)
+        (* # Update internal state *)
+        interestIndex = newMinterInterestIndex;
+        lastInterestIndexUpdateTime = s.lastInterestIndexUpdateTime + numPeriods * v_SECONDS_PER_COMPOUND;
+      } /\
+      ops = nops
 
-        # Update internal state
-        self.data.interestIndex = newMinterInterestIndex
-        self.data.lastInterestIndexUpdateTime = self.data.lastInterestIndexUpdateTime.add_seconds(sp.to_int(numPeriods * Constants.SECONDS_PER_COMPOUND))
+    predicate repay (_st : step)
+      (tokensToRepay : nat)
+      (s : storage) (ops : list operation) (s' : storage) =
+
+      (* # Calculate new interest indices for the minter and the oven. *)
+      let timeDeltaSeconds = v_now - s.lastInterestIndexUpdateTime in
+      let numPeriods = timeDeltaSeconds / v_SECONDS_PER_COMPOUND in
+      let newMinterInterestIndex =
+        compoundWithLinearApproximation s.interestIndex s.stabilityFee numPeriods
+      in
+
+      (* # Disallow repay operations on liquidated ovens. *)
+      s.isLiquidated = false /\
+
+      (* # Calculate newly accrued stability fees and determine total fees. *)
+      let accruedStabilityFeeTokens = calculateNewAccruedInterest
+        s.interestIndex
+        s.borrowedTokens
+        s.stabilityFeeTokens
+        newMinterInterestIndex
+      in
+      let newStabilityFeeTokens = s.stabilityFeeTokens + accruedStabilityFeeTokens in
+  
+      (* # Determine new values for stability fee tokens and borrowed token value. *)
+      (* # Also, note down the number of stability fee tokens repaid. *)
+      
+      (*
+      let (stabilityFeeTokensRepaid : nat),
+          (remainingStabilityFeeTokens : nat),
+          (remainingBorrowedTokenBalance : nat) =
+        if tokensToRepay < newStabilityFeeTokens then
+          (tokensToRepay, newStabilityFeeTokens - tokensToRepay, s.borrowedTokens)
+        else
+          (newStabilityFeeTokens, 0, s.borrowedTokens - (tokensToRepay - newStabilityFeeTokens))
+      in
+      *)
+
+      let NatNatNat (stabilityFeeTokensRepaid : nat)
+          (remainingStabilityFeeTokens : nat)
+          (remainingBorrowedTokenBalance : nat) =
+        if tokensToRepay < newStabilityFeeTokens then
+          (NatNatNat tokensToRepay (newStabilityFeeTokens - tokensToRepay) s.borrowedTokens)
+        else
+          (NatNatNat newStabilityFeeTokens 0 (s.borrowedTokens - (tokensToRepay - newStabilityFeeTokens)))
+      in
+
+      let nops = Nil in
+      (* # Burn and mint tokens in Dev fund. *)
+      let nops = mintTokensToStabilityAndDevFund s nops stabilityFeeTokensRepaid in
+      let nops = burnTokens s nops tokensToRepay s.ownerAddress in
+      s' = {
+        s with
+        (* # Inform oven of new state. *)
+        borrowedTokens = remainingBorrowedTokenBalance;
+        stabilityFeeTokens = remainingStabilityFeeTokens;
+
+        (* # Update internal state *)
+        interestIndex = newMinterInterestIndex;
+        lastInterestIndexUpdateTime = s.lastInterestIndexUpdateTime + numPeriods * v_SECONDS_PER_COMPOUND;
+      } /\
+      ops = nops
+
+    predicate liquidate (st : step)
+      (oraclePrice : nat)
+      (ovenBalance : nat)
+      (_param : unit)
+      (s : storage) (ops : list operation) (s' : storage) =
+
+      let liquidatorAddress = st.sender in
+
+      (* # Calculate new interest indices for the minter and the oven. *)
+      let timeDeltaSeconds = v_now - s.lastInterestIndexUpdateTime in
+      let numPeriods = timeDeltaSeconds / v_SECONDS_PER_COMPOUND in
+      let newMinterInterestIndex =
+        compoundWithLinearApproximation s.interestIndex s.stabilityFee numPeriods
+      in
+
+      (* # Disallow additional liquidate operations on liquidated ovens. *)
+      s.isLiquidated = false /\
+
+      (* # Calculate newly accrued stability fees and determine total fees. *)
+      let accruedStabilityFeeTokens = calculateNewAccruedInterest
+        s.interestIndex
+        s.borrowedTokens
+        s.stabilityFeeTokens
+        newMinterInterestIndex
+      in
+      let newStabilityFeeTokens = s.stabilityFeeTokens + accruedStabilityFeeTokens in
+
+      (* # Verify oven is under collateralized *)
+      let totalOutstandingTokens = s.borrowedTokens + newStabilityFeeTokens in
+      let currentcollateralizationPercentage =
+        computeCollateralizationPercentage ovenBalance oraclePrice totalOutstandingTokens
+      in
+      currentcollateralizationPercentage < s.collateralizationPercentage /\
+
+      (* # Verify liquidation is allowed. *)
+      (* # Undercollateralization is performed as a check above. *)
+      (* # Liquidity Pool and Stability Fund can always liquidate, others must be below privateLiquidationFeePercentage *)
+      let privateLiquidationRequirement = s.collateralizationPercentage - s.privateOwnerLiquidationThreshold in
+      (
+        (liquidatorAddress = s.liquidityPoolContractAddress) || (* # sender is liquidity pool *)
+        (liquidatorAddress = s.stabilityFundContractAddress) || (* # sender is stability fund *)
+        (currentcollateralizationPercentage < privateLiquidationRequirement) (* # sender is private and collateralization is below privateLiquidationFeePercentage *)
+      ) /\
+
+      (* # Calculate a liquidation fee. *)
+      let liquidationFee = (totalOutstandingTokens * s.liquidationFeePercent) / v_PRECISION in
+
+      let nops = Nil in
+
+      (* # Burn tokens from the liquidator to pay for the Oven. *)
+      let nops = burnTokens s nops (totalOutstandingTokens + liquidationFee) liquidatorAddress in
+          
+      (* # Mint the extra tokens in the dev fund if they were paid. *)
+      let nops = mintTokensToStabilityAndDevFund s nops (newStabilityFeeTokens + liquidationFee) in
+
+      (* # Send collateral to liquidator. *)
+      let nops = Cons (Xfer (Gp'Unknown'default ()) (ovenBalance / v_MUTEZ_TO_KOLIBRI_CONVERSION) liquidatorAddress) nops in
+
+      s' = {
+        s with
+        (* # Inform oven it is liquidated, clear owed tokens and return no collateral.*)
+        borrowedTokens = 0;
+        stabilityFeeTokens = 0;
+        isLiquidated = true;
+
+        (* # Update internal state *)
+        interestIndex = newMinterInterestIndex;
+        lastInterestIndexUpdateTime = s.lastInterestIndexUpdateTime + numPeriods * v_SECONDS_PER_COMPOUND;
+      } /\
+      ops = nops
 
   end
 
+end
+
+scope TokenContract
+  type storage [@gen_wf] = {
+    admin: address;
+    totalSupply : nat;
+    balances : map address nat;
+    debtCeiling : nat;
+  }
+
+  let upper_ops = 1
+
+  predicate pre (_st : step) (_gp : gparam) (_c : ctx) = true
+
+  predicate post (st : step) (gp : gparam) (c : ctx) (c' : ctx) = post_tokenContract_inv st gp c c'
+
+  scope Spec
+
+    predicate mint (st : step)
+      (addr : address)
+      (value : nat)
+      (s : storage) (ops : list operation) (s' : storage) =
+      st.sender = s.admin /\
+      s' = { s with
+        totalSupply = s.totalSupply + value;
+        balances = s.balances[addr <- s.balances[addr] + value]
+      } /\
+      s.totalSupply + value <= s.debtCeiling /\
+      ops = Nil
+
+    predicate burn (st : step)
+      (addr : address)
+      (value : nat)
+      (s : storage) (ops : list operation) (s' : storage) =
+      st.sender = s.admin /\
+      s.balances[addr] >= value /\
+      s' = { s with
+        totalSupply = s.totalSupply - value;
+        balances = s.balances[addr <- s.balances[addr] - value]
+      } /\
+      ops = Nil
+
+  end
 end
 
 (*
