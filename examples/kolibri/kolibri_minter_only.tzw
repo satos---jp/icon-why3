@@ -8,10 +8,9 @@ scope Middleambles
 
   constant v_MUTEZ_TO_KOLIBRI_CONVERSION : nat = 1000000000000
 
-  constant v_now : nat = 1
-
   function (/) (x : nat) (y : nat) : nat = div x y
 
+  (* `initialValue * (1 + stabilityFee / v_PRECISION) ** numPeriods` is approximated *)
   function compoundWithLinearApproximation
     (initialValue : nat)
     (stabilityFee : nat)
@@ -41,11 +40,14 @@ scope Middleambles
     ratio * 100
 
   type minter_storage [@gen_wf] = {
+    (* address constants *)
     tokenContractaddr : address;
     developerFundContractAddress : address;
     stabilityFundContractAddress : address;
     ownerAddress : address;
     liquidityPoolContractAddress : address;
+
+    ovenBalance : nat;
 
     isLiquidated : bool;
     devFundSplit : nat;
@@ -61,6 +63,7 @@ scope Middleambles
   }
 
   predicate is_minter_storage_wf (_v: minter_storage) =
+    ((is_nat_wf (_v.ovenBalance)) /\
     ((is_nat_wf (_v.interestIndex)) /\
        ((is_nat_wf (_v.stabilityFeeTokens)) /\
           ((is_nat_wf (_v.borrowedTokens)) /\
@@ -80,7 +83,7 @@ scope Middleambles
                                                (_v.developerFundContractAddress)) /\
                                               ((is_address_wf
                                                   (_v.tokenContractaddr)) /\
-                                                 true)))))))))))))))
+                                                 true))))))))))))))))
   
   function mintTokens
     (s : minter_storage)
@@ -110,23 +113,105 @@ scope Middleambles
     Cons (Xfer (Gp'0burn'0address4nat address tokensToBurn) 0 s.tokenContractaddr) ops
 
   type t_NatNatNat = NatNatNat nat nat nat
+
+  function oraclePrice : nat
+
 end
 
 scope Postambles
 
-  predicate pre_inv (_c : ctx) = true
+  function v_developerFundContractAddress : address
 
-  predicate post_minter_inv (_st : step) (_gp : gparam) (_c : ctx) (_c' : ctx) = true
+  function v_stabilityFundContractAddress : address
 
-  predicate post_tokenContract_inv (_st : step) (_gp : gparam) (_c : ctx) (_c' : ctx) = true
+  predicate addr_inv (c : ctx) =
+    v_developerFundContractAddress <> v_stabilityFundContractAddress /\
+    v_developerFundContractAddress <> c.minter_storage.ownerAddress /\
+    v_stabilityFundContractAddress <> c.minter_storage.ownerAddress /\
+
+    c.minter_storage.tokenContractaddr = TokenContract.addr /\
+    c.minter_storage.developerFundContractAddress = v_developerFundContractAddress /\
+    c.minter_storage.stabilityFundContractAddress = v_stabilityFundContractAddress /\
+    c.tokenContract_storage.TokenContract.admin = Minter.addr
+
+  (* s.borrowedTokens@Minter = balance[owner]+balance[Funds]@TokenContract *)
+  predicate borrowedTokens_inv (c : ctx) =
+    let ms = c.minter_storage in
+    ms.borrowedTokens =
+    c.tokenContract_storage.TokenContract.balances[ms.ownerAddress] +
+    c.tokenContract_storage.TokenContract.balances[ms.developerFundContractAddress] +
+    c.tokenContract_storage.TokenContract.balances[ms.stabilityFundContractAddress]
+
+  predicate before_liquidate_inv (c : ctx) =
+    borrowedTokens_inv c
+
+  predicate oven_inv (c : ctx) =
+    if c.minter_storage.isLiquidated then true else before_liquidate_inv c
+
+  predicate oven_trans (c : ctx) (c' : ctx) =
+    c.minter_storage.isLiquidated -> c'.minter_storage.isLiquidated
+
+  predicate pre_unknown_inv (c : ctx) =
+    addr_inv c /\ oven_inv c
+
+  predicate post_unknown_inv (c : ctx) (c' : ctx) =
+    addr_inv c' /\ oven_trans c c' /\ oven_inv c'
+
+  predicate pre_minter_inv (_st : step) (_gp : gparam) (c : ctx) =
+    addr_inv c /\ oven_inv c
+
+  predicate post_minter_inv (_st : step) (_gp : gparam) (c : ctx) (c' : ctx) =
+    addr_inv c' /\ oven_trans c c' /\ oven_inv c'
+
+(*
+
+    /\
+    match gp with
+    | Gp'0borrow'0nat4nat _balance _tokensToBorrow -> oven_inv c' /\
+        borrowedTokens_inv c'
+    | Gp'0repay'0nat _tokensToRepay -> oven_inv c' /\
+        borrowedTokens_inv c'
+    | Gp'0liquidate'0nat4unit _ () ->
+        c'.minter_storage.isLiquidated /\
+        true
+    | _ -> oven_inv c' /\ true
+    end
+
+        let addr = c.minter_storage.ownerAddress in
+        c'.tokenContract_storage.TokenContract.balances[addr] =
+        c.tokenContract_storage.TokenContract.balances[addr] + tokensToBorrow /\
+        c'.minter_storage.borrowedTokens =
+        c.minter_storage.borrowedTokens + tokensToBorrow /\
+
+        let ms = c.minter_storage in
+        let ms' = c'.minter_storage in
+        c'.tokenContract_storage.TokenContract.balances[ms.developerFundContractAddress] =
+        c.tokenContract_storage.TokenContract.balances[ms.developerFundContractAddress]
+*)
+
+  predicate pre_tokenContract_inv (st : step) (_gp : gparam) (c : ctx) =
+    addr_inv c
+
+  predicate post_tokenContract_inv (st : step) (gp : gparam) (c : ctx) (c' : ctx) =
+    addr_inv c' /\ st.sender = Minter.addr /\
+    c'.minter_storage = c.minter_storage /\
+    match gp with
+    | Gp'0mint'0address4nat addr v ->
+      c'.tokenContract_storage.TokenContract.balances =
+      c.tokenContract_storage.TokenContract.balances[addr <- c.tokenContract_storage.TokenContract.balances[addr] + v]
+    | Gp'0burn'0address4nat addr v ->
+      c'.tokenContract_storage.TokenContract.balances =
+      c.tokenContract_storage.TokenContract.balances[addr <- c.tokenContract_storage.TokenContract.balances[addr] - v]
+    | _ -> true
+    end
 
 end
 
 scope Unknown
 
-  predicate pre (_c : ctx) = true
+  predicate pre (c : ctx) = pre_unknown_inv c
 
-  predicate post (_c : ctx) (_c' : ctx) = true
+  predicate post (c : ctx) (c' : ctx) = post_unknown_inv c c'
 
   scope Entrypoint
 
@@ -142,14 +227,12 @@ scope Minter
 
   let upper_ops = 4
 
-  predicate pre (_st : step) (_gp : gparam) (c : ctx) = pre_inv c
+  predicate pre (st : step) (gp : gparam) (c : ctx) = pre_minter_inv st gp c
 
   predicate post (st : step) (gp : gparam) (c : ctx) (c' : ctx) = post_minter_inv st gp c c'
 
   scope Spec
-
-    predicate borrow (_st : step)
-      (oraclePrice : nat)
+    predicate borrow (st : step)
       (ovenBalance : nat)
       (tokensToBorrow : nat)
       (s : storage) (ops : list operation) (s' : storage) =
@@ -157,7 +240,7 @@ scope Minter
       (* let ovenBalance = minter_balance * v_MUTEZ_TO_KOLIBRI_CONVERSION in *)
 
       (* Calculate new interest indices for the minter and the oven. *)
-      let timeDeltaSeconds = v_now - s.lastInterestIndexUpdateTime in
+      let timeDeltaSeconds = st.now - s.lastInterestIndexUpdateTime in
       let numPeriods = timeDeltaSeconds / v_SECONDS_PER_COMPOUND in
       let newMinterInterestIndex =
         compoundWithLinearApproximation s.interestIndex s.stabilityFee numPeriods
@@ -205,12 +288,12 @@ scope Minter
       } /\
       ops = nops
 
-    predicate repay (_st : step)
+    predicate repay (st : step)
       (tokensToRepay : nat)
       (s : storage) (ops : list operation) (s' : storage) =
 
       (* # Calculate new interest indices for the minter and the oven. *)
-      let timeDeltaSeconds = v_now - s.lastInterestIndexUpdateTime in
+      let timeDeltaSeconds = st.now - s.lastInterestIndexUpdateTime in
       let numPeriods = timeDeltaSeconds / v_SECONDS_PER_COMPOUND in
       let newMinterInterestIndex =
         compoundWithLinearApproximation s.interestIndex s.stabilityFee numPeriods
@@ -268,7 +351,6 @@ scope Minter
       ops = nops
 
     predicate liquidate (st : step)
-      (oraclePrice : nat)
       (ovenBalance : nat)
       (_param : unit)
       (s : storage) (ops : list operation) (s' : storage) =
@@ -276,7 +358,7 @@ scope Minter
       let liquidatorAddress = st.sender in
 
       (* # Calculate new interest indices for the minter and the oven. *)
-      let timeDeltaSeconds = v_now - s.lastInterestIndexUpdateTime in
+      let timeDeltaSeconds = st.now - s.lastInterestIndexUpdateTime in
       let numPeriods = timeDeltaSeconds / v_SECONDS_PER_COMPOUND in
       let newMinterInterestIndex =
         compoundWithLinearApproximation s.interestIndex s.stabilityFee numPeriods
@@ -306,8 +388,10 @@ scope Minter
       (* # Liquidity Pool and Stability Fund can always liquidate, others must be below privateLiquidationFeePercentage *)
       let privateLiquidationRequirement = s.collateralizationPercentage - s.privateOwnerLiquidationThreshold in
       (
+(*
         (liquidatorAddress = s.liquidityPoolContractAddress) || (* # sender is liquidity pool *)
         (liquidatorAddress = s.stabilityFundContractAddress) || (* # sender is stability fund *)
+*)
         (currentcollateralizationPercentage < privateLiquidationRequirement) (* # sender is private and collateralization is below privateLiquidationFeePercentage *)
       ) /\
 
@@ -337,7 +421,6 @@ scope Minter
         lastInterestIndexUpdateTime = s.lastInterestIndexUpdateTime + numPeriods * v_SECONDS_PER_COMPOUND;
       } /\
       ops = nops
-
   end
 
 end
@@ -352,7 +435,7 @@ scope TokenContract
 
   let upper_ops = 1
 
-  predicate pre (_st : step) (_gp : gparam) (_c : ctx) = true
+  predicate pre (st : step) (gp : gparam) (c : ctx) = pre_tokenContract_inv st gp c
 
   predicate post (st : step) (gp : gparam) (c : ctx) (c' : ctx) = post_tokenContract_inv st gp c c'
 
