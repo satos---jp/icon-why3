@@ -1,6 +1,6 @@
 (* Based on https://github.com/Hover-Labs/kolibri-contracts/blob/master/smart_contracts/ *)
 
-scope Middleambles
+scope Midambles
 
   constant v_SECONDS_PER_COMPOUND : nat = 60
 
