@@ -1,0 +1,99 @@
+scope Postambles
+
+  predicate addr_inv (c : ctx) =
+    c.caller_storage.Caller.callee_addr = Callee.addr
+
+  predicate cnt_resp_inv (c : ctx) =
+    c.caller_storage.Caller.counter + 123 = c.caller_storage.Caller.response
+
+  predicate ctx_inv (c : ctx) =
+    addr_inv c /\ cnt_resp_inv c
+
+  predicate post_caller_inv (st : step) (gp : gparam) (c : ctx) (c' : ctx) =
+    addr_inv c' /\
+    match gp with
+    | Gp'0callback'0nat param ->
+        st.sender = Callee.addr /\
+        c'.caller_storage.Caller.counter = c.caller_storage.Caller.counter /\
+        c'.caller_storage.Caller.response = param
+    | Gp'0update'0nat _param ->
+        cnt_resp_inv c'
+    | _ -> true
+    end
+
+  predicate pre_callee_inv (st : step) (_gp : gparam) (c : ctx) =
+    addr_inv c /\
+    (st.sender <> Caller.addr -> cnt_resp_inv c)
+
+  predicate post_callee_inv (st : step) (gp : gparam) (c : ctx) (c' : ctx) =
+    addr_inv c' /\
+    match gp with
+    | Gp'0oracle'0nat param ->
+        if st.sender = Caller.addr then
+          c'.caller_storage.Caller.response = param + 123 /\
+          c'.caller_storage.Caller.counter = c.caller_storage.Caller.counter
+        else
+          cnt_resp_inv c'
+    | _ -> true
+    end
+
+end
+
+
+scope Unknown
+
+  predicate pre (c : ctx) = ctx_inv c
+
+  predicate post (_c : ctx) (c' : ctx) = ctx_inv c'
+
+  scope Entrypoint
+
+    predicate default unit
+
+  end
+
+end
+
+scope Tokens
+
+  type storage [@gen_wf] = {
+    admin: address;
+    totalSupply : nat;
+    balances : map address nat;
+    debtCeiling : nat;
+  }
+
+  let upper_ops = 1
+
+  predicate pre (st : step) (gp : gparam) (c : ctx) = pre_tokenContract_inv st gp c
+
+  predicate post (st : step) (gp : gparam) (c : ctx) (c' : ctx) = post_tokenContract_inv st gp c c'
+
+  scope Spec
+
+    predicate mint (st : step)
+      (addr : address)
+      (value : nat)
+      (s : storage) (ops : list operation) (s' : storage) =
+      st.sender = s.admin /\
+      s' = { s with
+        totalSupply = s.totalSupply + value;
+        balances = s.balances[addr <- s.balances[addr] + value]
+      } /\
+      s.totalSupply + value <= s.debtCeiling /\
+      ops = Nil
+
+    predicate burn (st : step)
+      (addr : address)
+      (value : nat)
+      (s : storage) (ops : list operation) (s' : storage) =
+      st.sender = s.admin /\
+      s.balances[addr] >= value /\
+      s' = { s with
+        totalSupply = s.totalSupply - value;
+        balances = s.balances[addr <- s.balances[addr] - value]
+      } /\
+      ops = Nil
+
+  end
+end
