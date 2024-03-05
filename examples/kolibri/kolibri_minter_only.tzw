@@ -62,29 +62,6 @@ scope Midambles
     interestIndex : nat;
   }
 
-  predicate is_minter_storage_wf (_v: minter_storage) =
-    ((is_nat_wf (_v.ovenBalance)) /\
-    ((is_nat_wf (_v.interestIndex)) /\
-       ((is_nat_wf (_v.stabilityFeeTokens)) /\
-          ((is_nat_wf (_v.borrowedTokens)) /\
-             ((is_nat_wf (_v.collateralizationPercentage)) /\
-                ((is_nat_wf (_v.stabilityFee)) /\
-                   ((is_nat_wf (_v.lastInterestIndexUpdateTime)) /\
-                      ((is_nat_wf (_v.liquidationFeePercent)) /\
-                         ((is_nat_wf (_v.privateOwnerLiquidationThreshold)) /\
-                            ((is_nat_wf (_v.devFundSplit)) /\
-                               ((is_bool_wf (_v.isLiquidated)) /\
-                                  ((is_address_wf
-                                      (_v.liquidityPoolContractAddress)) /\
-                                     ((is_address_wf (_v.ownerAddress)) /\
-                                        ((is_address_wf
-                                            (_v.stabilityFundContractAddress)) /\
-                                           ((is_address_wf
-                                               (_v.developerFundContractAddress)) /\
-                                              ((is_address_wf
-                                                  (_v.tokenContractaddr)) /\
-                                                 true))))))))))))))))
-  
   function mintTokens
     (s : minter_storage)
     (ops : list operation)
