@@ -10,6 +10,10 @@ scope Midambles
 
   function (/) (x : nat) (y : nat) : nat = div x y
 
+  (*
+  axiom divdiv : forall x a b : int. x >= 0 /\ a > 0 /\ b > 0 -> x / a / b = x / b / a
+  *)
+
   (* `initialValue * (1 + stabilityFee / v_PRECISION) ** numPeriods` is approximated *)
   function compoundWithLinearApproximation
     (initialValue : nat)
@@ -40,26 +44,27 @@ scope Midambles
     ratio * 100
 
   type minter_storage [@gen_wf] = {
-    (* address constants *)
+    (* address of constants *)
     tokenContractaddr : address;
     developerFundContractAddress : address;
     stabilityFundContractAddress : address;
     ownerAddress : address;
     liquidityPoolContractAddress : address;
 
-    ovenBalance : nat;
-
-    isLiquidated : bool;
+    (* Constant parameters *)
+    stabilityFee : nat;
+    collateralizationPercentage : nat;
     devFundSplit : nat;
     privateOwnerLiquidationThreshold : nat;
     liquidationFeePercent : nat;
 
-    lastInterestIndexUpdateTime : nat;
-    stabilityFee : nat;
-    collateralizationPercentage : nat;
+    (* Non-constant parameters *)
+    isLiquidated : bool;
+    ovenBalance : nat;
     borrowedTokens : nat;
     stabilityFeeTokens : nat;
     interestIndex : nat;
+    lastInterestIndexUpdateTime : nat;
   }
 
   function mintTokens
@@ -119,6 +124,117 @@ scope Postambles
     c.tokenContract_storage.TokenContract.balances[ms.developerFundContractAddress] +
     c.tokenContract_storage.TokenContract.balances[ms.stabilityFundContractAddress]
 
+  (* interest is correctly calculated *)
+  predicate interest_onestep_inv (st : step) (gp : gparam) (c : ctx) (c' : ctx) =
+    let fee = c.minter_storage.stabilityFee in
+    let numPeriods = (st.now - c.minter_storage.lastInterestIndexUpdateTime) / v_SECONDS_PER_COMPOUND in
+    
+    let s = c.minter_storage in
+    match gp with
+    | Gp'0borrow'0nat4nat _balance _tokensToBorrow ->
+        c'.minter_storage.interestIndex =
+        s.interestIndex * (v_PRECISION + (numPeriods * s.stabilityFee)) / v_PRECISION
+    | _ -> true
+    end
+
+  function principle (c: ctx) : nat =
+    c.minter_storage.borrowedTokens + c.minter_storage.stabilityFeeTokens
+
+  (* stability fee is correctly calculated *)
+  predicate stabilityFee_onestep_inv (st : step) (gp : gparam) (c : ctx) (c' : ctx) =
+    let fee = c.minter_storage.stabilityFee in
+    let numPeriods = (st.now - c.minter_storage.lastInterestIndexUpdateTime) / v_SECONDS_PER_COMPOUND in
+    
+    match gp with
+    | Gp'0borrow'0nat4nat _balance tokensToBorrow ->
+      
+      let s = c.minter_storage in
+      let newMinterInterestIndex = s.interestIndex * (v_PRECISION + (numPeriods * s.stabilityFee)) / v_PRECISION in
+
+      (* # Calculate newly accrued stability fees and determine total fees. *)
+      let f_accruedStabilityFeeTokens = calculateNewAccruedInterest
+        s.interestIndex
+        s.borrowedTokens
+        s.stabilityFeeTokens
+        newMinterInterestIndex
+      in
+
+      let accruedStabilityFeeTokens =
+        let ovenInterestIndex = s.interestIndex in
+        let borrowedTokens = s.borrowedTokens in
+        let stabilityFeeTokens = s.stabilityFeeTokens in
+        let minterInterestIndex = newMinterInterestIndex in
+        let ratio =
+          (minterInterestIndex * v_PRECISION) / ovenInterestIndex
+        in
+        let totalPrinciple = borrowedTokens + stabilityFeeTokens in
+        let newTotalTokens = (ratio * totalPrinciple) / v_PRECISION in
+        let newTokensAccruedAsFee = newTotalTokens - totalPrinciple in
+        newTokensAccruedAsFee
+      in
+
+      f_accruedStabilityFeeTokens = accruedStabilityFeeTokens
+      (*
+        function calculateNewAccruedInterest
+    (ovenInterestIndex : nat)
+    (borrowedTokens : nat)
+    (stabilityFeeTokens : nat)
+    (minterInterestIndex  : nat) : nat =
+    let ratio =
+      (minterInterestIndex * v_PRECISION) / ovenInterestIndex
+    in
+    let totalPrinciple = borrowedTokens + stabilityFeeTokens in
+    let newTotalTokens = (ratio * totalPrinciple) / v_PRECISION in
+    let newTokensAccruedAsFee = newTotalTokens - totalPrinciple in
+    newTokensAccruedAsFee
+      *)
+      (*
+      let minterInterestIndex = newMinterInterestIndex in
+      let ovenInterestIndex = s.interestIndex in
+      let ratio =
+          (minterInterestIndex * v_PRECISION) / ovenInterestIndex
+        in
+      let totalPrinciple = s.borrowedTokens + s.stabilityFeeTokens in
+      let newTotalTokens = (ratio * totalPrinciple) / v_PRECISION in
+      let newTokensAccruedAsFee = newTotalTokens - totalPrinciple in
+      let accruedStabilityFeeTokens = newTokensAccruedAsFee in
+      *)
+
+      (*
+      let newStabilityFeeTokens = s.stabilityFeeTokens + accruedStabilityFeeTokens in
+      c'.minter_storage.stabilityFeeTokens = newStabilityFeeTokens
+      *)
+    
+    (*
+      
+      let minterInterestIndex = s.interestIndex * (v_PRECISION + (numPeriods * s.stabilityFee)) / v_PRECISION in
+      let ovenInterestIndex = s.interestIndex in
+
+      let ratio =
+          (minterInterestIndex * v_PRECISION) / ovenInterestIndex
+        in
+      let totalPrinciple = s.borrowedTokens + s.stabilityFeeTokens in
+      let newTotalTokens = (ratio * totalPrinciple) / v_PRECISION in
+      let newTokensAccruedAsFee = newTotalTokens - totalPrinciple in
+      
+      c'.minter_storage.stabilityFeeTokens = 
+      c.minter_storage.stabilityFeeTokens + newTokensAccruedAsFee
+    *)
+      (*
+        let ratio =
+          (minterInterestIndex * v_PRECISION) / ovenInterestIndex
+        in
+        let totalPrinciple = borrowedTokens + stabilityFeeTokens in
+        let newTotalTokens = (ratio * totalPrinciple) / v_PRECISION in
+        let newTokensAccruedAsFee = newTotalTokens - totalPrinciple in
+        newTokensAccruedAsFee
+      *)
+      (*
+        principle c' = principle c * (v_PRECISION + (numPeriods * fee)) / v_PRECISION + tokensToBorrow
+      *)
+    | _ -> true
+    end
+
   predicate before_liquidate_inv (c : ctx) =
     borrowedTokens_inv c
 
@@ -137,8 +253,12 @@ scope Postambles
   predicate pre_minter_inv (_st : step) (_gp : gparam) (c : ctx) =
     addr_inv c /\ oven_inv c
 
-  predicate post_minter_inv (_st : step) (_gp : gparam) (c : ctx) (c' : ctx) =
-    addr_inv c' /\ oven_trans c c' /\ oven_inv c'
+  predicate post_minter_inv (st : step) (gp : gparam) (c : ctx) (c' : ctx) =
+    addr_inv c' /\ oven_trans c c' /\ oven_inv c' /\
+    interest_onestep_inv st gp c c' /\
+    stabilityFee_onestep_inv st gp c c' /\
+    true
+    
 
 (*
 
@@ -379,7 +499,7 @@ scope Minter
 
       (* # Burn tokens from the liquidator to pay for the Oven. *)
       let nops = burnTokens s nops (totalOutstandingTokens + liquidationFee) liquidatorAddress in
-          
+
       (* # Mint the extra tokens in the dev fund if they were paid. *)
       let nops = mintTokensToStabilityAndDevFund s nops (newStabilityFeeTokens + liquidationFee) in
 
