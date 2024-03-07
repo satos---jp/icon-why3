@@ -133,6 +133,10 @@ scope Postambles
     match gp with
     | Gp'0borrow'0nat4nat _balance _tokensToBorrow ->
         c'.minter_storage.interestIndex =
+        compoundWithLinearApproximation s.interestIndex s.stabilityFee numPeriods /\
+        compoundWithLinearApproximation s.interestIndex s.stabilityFee numPeriods = 
+        s.interestIndex * (v_PRECISION + (numPeriods * s.stabilityFee)) / v_PRECISION /\
+        c'.minter_storage.interestIndex =
         s.interestIndex * (v_PRECISION + (numPeriods * s.stabilityFee)) / v_PRECISION
     | _ -> true
     end
