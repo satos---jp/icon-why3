@@ -124,120 +124,47 @@ scope Postambles
     c.tokenContract_storage.TokenContract.balances[ms.developerFundContractAddress] +
     c.tokenContract_storage.TokenContract.balances[ms.stabilityFundContractAddress]
 
-  (* interest is correctly calculated *)
-  predicate interest_onestep_inv (st : step) (gp : gparam) (c : ctx) (c' : ctx) =
-    let fee = c.minter_storage.stabilityFee in
-    let numPeriods = (st.now - c.minter_storage.lastInterestIndexUpdateTime) / v_SECONDS_PER_COMPOUND in
-    
-    let s = c.minter_storage in
-    match gp with
-    | Gp'0borrow'0nat4nat _balance _tokensToBorrow ->
-        c'.minter_storage.interestIndex =
-        compoundWithLinearApproximation s.interestIndex s.stabilityFee numPeriods /\
-        compoundWithLinearApproximation s.interestIndex s.stabilityFee numPeriods = 
-        s.interestIndex * (v_PRECISION + (numPeriods * s.stabilityFee)) / v_PRECISION /\
-        c'.minter_storage.interestIndex =
-        s.interestIndex * (v_PRECISION + (numPeriods * s.stabilityFee)) / v_PRECISION
-    | _ -> true
-    end
-
   function principle (c: ctx) : nat =
     c.minter_storage.borrowedTokens + c.minter_storage.stabilityFeeTokens
 
-  (* stability fee is correctly calculated *)
-  predicate stabilityFee_onestep_inv (st : step) (gp : gparam) (c : ctx) (c' : ctx) =
-    let fee = c.minter_storage.stabilityFee in
-    let numPeriods = (st.now - c.minter_storage.lastInterestIndexUpdateTime) / v_SECONDS_PER_COMPOUND in
-    
+  predicate liquidator_will_benefit (st : step) (gp : gparam) (c : ctx) (c' : ctx) =
+    ((not c'.minter_storage.isLiquidated) /\ c.minter_storage.isLiquidated) -> (
     match gp with
-    | Gp'0borrow'0nat4nat _balance tokensToBorrow ->
-      
+    | Gp'0liquidate'0nat4unit balance () ->
       let s = c.minter_storage in
-      let newMinterInterestIndex = s.interestIndex * (v_PRECISION + (numPeriods * s.stabilityFee)) / v_PRECISION in
+      let ovenBalance = balance in
+
+      let timeDeltaSeconds = st.now - s.lastInterestIndexUpdateTime in
+      let numPeriods = timeDeltaSeconds / v_SECONDS_PER_COMPOUND in
+      let newMinterInterestIndex =
+        compoundWithLinearApproximation s.interestIndex s.stabilityFee numPeriods
+      in
 
       (* # Calculate newly accrued stability fees and determine total fees. *)
-      let f_accruedStabilityFeeTokens = calculateNewAccruedInterest
+      let accruedStabilityFeeTokens = calculateNewAccruedInterest
         s.interestIndex
         s.borrowedTokens
         s.stabilityFeeTokens
         newMinterInterestIndex
       in
-
-      let accruedStabilityFeeTokens =
-        let ovenInterestIndex = s.interestIndex in
-        let borrowedTokens = s.borrowedTokens in
-        let stabilityFeeTokens = s.stabilityFeeTokens in
-        let minterInterestIndex = newMinterInterestIndex in
-        let ratio =
-          (minterInterestIndex * v_PRECISION) / ovenInterestIndex
-        in
-        let totalPrinciple = borrowedTokens + stabilityFeeTokens in
-        let newTotalTokens = (ratio * totalPrinciple) / v_PRECISION in
-        let newTokensAccruedAsFee = newTotalTokens - totalPrinciple in
-        newTokensAccruedAsFee
-      in
-
-      f_accruedStabilityFeeTokens = accruedStabilityFeeTokens
-      (*
-        function calculateNewAccruedInterest
-    (ovenInterestIndex : nat)
-    (borrowedTokens : nat)
-    (stabilityFeeTokens : nat)
-    (minterInterestIndex  : nat) : nat =
-    let ratio =
-      (minterInterestIndex * v_PRECISION) / ovenInterestIndex
-    in
-    let totalPrinciple = borrowedTokens + stabilityFeeTokens in
-    let newTotalTokens = (ratio * totalPrinciple) / v_PRECISION in
-    let newTokensAccruedAsFee = newTotalTokens - totalPrinciple in
-    newTokensAccruedAsFee
-      *)
-      (*
-      let minterInterestIndex = newMinterInterestIndex in
-      let ovenInterestIndex = s.interestIndex in
-      let ratio =
-          (minterInterestIndex * v_PRECISION) / ovenInterestIndex
-        in
-      let totalPrinciple = s.borrowedTokens + s.stabilityFeeTokens in
-      let newTotalTokens = (ratio * totalPrinciple) / v_PRECISION in
-      let newTokensAccruedAsFee = newTotalTokens - totalPrinciple in
-      let accruedStabilityFeeTokens = newTokensAccruedAsFee in
-      *)
-
-      (*
       let newStabilityFeeTokens = s.stabilityFeeTokens + accruedStabilityFeeTokens in
-      c'.minter_storage.stabilityFeeTokens = newStabilityFeeTokens
-      *)
-    
-    (*
-      
-      let minterInterestIndex = s.interestIndex * (v_PRECISION + (numPeriods * s.stabilityFee)) / v_PRECISION in
-      let ovenInterestIndex = s.interestIndex in
+      (* # Verify oven is under collateralized *)
+      let totalOutstandingTokens = s.borrowedTokens + newStabilityFeeTokens in
+      let currentcollateralizationPercentage =
+        computeCollateralizationPercentage ovenBalance oraclePrice totalOutstandingTokens
+      in
+      currentcollateralizationPercentage < s.collateralizationPercentage /\
 
-      let ratio =
-          (minterInterestIndex * v_PRECISION) / ovenInterestIndex
-        in
-      let totalPrinciple = s.borrowedTokens + s.stabilityFeeTokens in
-      let newTotalTokens = (ratio * totalPrinciple) / v_PRECISION in
-      let newTokensAccruedAsFee = newTotalTokens - totalPrinciple in
-      
-      c'.minter_storage.stabilityFeeTokens = 
-      c.minter_storage.stabilityFeeTokens + newTokensAccruedAsFee
-    *)
-      (*
-        let ratio =
-          (minterInterestIndex * v_PRECISION) / ovenInterestIndex
-        in
-        let totalPrinciple = borrowedTokens + stabilityFeeTokens in
-        let newTotalTokens = (ratio * totalPrinciple) / v_PRECISION in
-        let newTokensAccruedAsFee = newTotalTokens - totalPrinciple in
-        newTokensAccruedAsFee
-      *)
-      (*
-        principle c' = principle c * (v_PRECISION + (numPeriods * fee)) / v_PRECISION + tokensToBorrow
-      *)
-    | _ -> true
-    end
+      100 < currentcollateralizationPercentage -> 
+      let earned_xtz = c'.storage_of_sender - c.storage_of_sender in
+      let paid_token =
+        c'.tokenContract_storage.balance[c.sender] - c.tokenContract_storage.balance[c.sender]
+      in
+      earned_xtz * oraclePrice > paid_token
+      /\
+        true
+    | _ -> false
+    end)
 
   predicate before_liquidate_inv (c : ctx) =
     borrowedTokens_inv c
@@ -259,8 +186,7 @@ scope Postambles
 
   predicate post_minter_inv (st : step) (gp : gparam) (c : ctx) (c' : ctx) =
     addr_inv c' /\ oven_trans c c' /\ oven_inv c' /\
-    interest_onestep_inv st gp c c' /\
-    stabilityFee_onestep_inv st gp c c' /\
+    liquidator_will_benefit st gp c c' /\
     true
     
 
