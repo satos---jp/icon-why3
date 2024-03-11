@@ -203,13 +203,14 @@ module E = struct
 end
 
 module Step_constant = struct
-  let mk source sender self amount level now : expr =
+  let mk source sender self amount balance level now : expr =
     E.mk_record
       [
         (qualid [ "source" ], source);
         (qualid [ "sender" ], sender);
         (qualid [ "self" ], self);
         (qualid [ "amount" ], amount);
+        (qualid [ "balance" ], balance);
         (qualid [ "level" ], level);
         (qualid [ "now" ], now);
       ]
@@ -218,6 +219,7 @@ module Step_constant = struct
   let sender st : expr = eapp (qualid [ "sender" ]) [ st ]
   let self st : expr = eapp (qualid [ "self" ]) [ st ]
   let amount st : expr = eapp (qualid [ "amount" ]) [ st ]
+  let balance st : expr = eapp (qualid [ "balance" ]) [ st ]
   let level st : expr = eapp (qualid [ "level" ]) [ st ]
   let now st : expr = eapp (qualid [ "now" ]) [ st ]
 end
@@ -472,7 +474,14 @@ module Generator (D : Desc) = struct
       (fun _ c e ->
         E.mk_if
           (is_contract_of c @@ Step_constant.self st)
-          (wrap_assume ~assumption:(T.of_expr @@ call_param_wf_of c gp)
+          (wrap_assume
+             ~assumption:
+               (T.mk_and
+                  (T.of_expr @@ call_param_wf_of c gp)
+                  (T.of_expr
+                     (E.mk_bin (Step_constant.balance st) "="
+                        (E.mk_bin (balance_of c ctx) "+"
+                           (Step_constant.amount st)))))
           @@ call_func_of c st gp ctx)
           e)
       contracts (call_unknown ctx)
@@ -496,6 +505,13 @@ module Generator (D : Desc) = struct
               call_ctx_wf @@ E.var_of_binder ctx;
               call_step_wf @@ E.var_of_binder st;
               call_param_wf_of contract @@ E.var_of_binder gparam;
+              E.mk_bin
+                (Step_constant.balance @@ E.var_of_binder st)
+                "="
+                (E.mk_bin
+                   (balance_of contract (E.var_of_binder ctx))
+                   "+"
+                   (Step_constant.amount @@ E.var_of_binder st));
               call_pre_of contract (E.var_of_binder st) (E.var_of_binder gparam)
                 (E.var_of_binder ctx);
             ];
@@ -558,6 +574,14 @@ module Generator (D : Desc) = struct
                                   (source @@ E.var_of_binder st)
                                   (self @@ E.var_of_binder st)
                                   (E.mk_var dst) (E.mk_var amt)
+                                  (M.fold
+                                     (fun _ c e ->
+                                       E.mk_if
+                                         (is_contract_of c @@ E.mk_var dst)
+                                         (E.mk_bin (balance_of c ctx) "+"
+                                            (E.mk_var amt))
+                                         e)
+                                     contracts (econst 0))
                                   (level @@ E.var_of_binder st)
                                   (now @@ E.var_of_binder st))
                             in
