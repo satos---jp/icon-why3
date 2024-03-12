@@ -39,8 +39,13 @@ scope Midambles
     (xtzPrice : nat)
     (borrowedTokens : nat) : nat =
     (* # Compute collateral value. *)
-    let collateralValue = ovenBalance * xtzPrice / v_PRECISION in
-    let ratio = (collateralValue * v_PRECISION) / borrowedTokens in
+    (* Original *)
+    (*
+      let collateralValue = ovenBalance * xtzPrice / v_PRECISION in
+      let ratio = (collateralValue * v_PRECISION) / borrowedTokens in
+    *)
+    (* Simplified version for easier verification *)
+    let ratio = ovenBalance * xtzPrice / borrowedTokens in
     ratio * 100
 
   type minter_storage [@gen_wf] = {
@@ -163,7 +168,7 @@ scope Postambles
       let calc_paid_token = totalOutstandingTokens + liquidationFee in
 
 
-      (* 100 < currentcollateralizationPercentage -> *)
+      100 < currentcollateralizationPercentage ->
       st.sender = Dummy_Liquidator.addr ->
       let earned_xtz = c'.dummy_Liquidator_balance - c.dummy_Liquidator_balance in
       let paid_token =
@@ -173,6 +178,11 @@ scope Postambles
 
       calc_paid_token = paid_token /\
       earned_xtz = (ovenBalance / v_MUTEZ_TO_KOLIBRI_CONVERSION) /\
+      calc_paid_token = totalOutstandingTokens * (v_PRECISION + s.liquidationFeePercent) / v_PRECISION /\
+
+      currentcollateralizationPercentage =
+        ovenBalance * oraclePrice / totalOutstandingTokens * 100
+      /\
       true)
     | _ -> false
     end
