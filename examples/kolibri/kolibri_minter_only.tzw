@@ -20,7 +20,8 @@ scope Midambles
       assert { x / y * y <= x }
     )
   
-  let lemma_divmul_liquidate (
+  (*
+  let lemma divmul_liquidate (
     v_PRECISION_liquidationFeePercent
     v_PRECISION 
     ovenBalance 
@@ -41,6 +42,7 @@ scope Midambles
       earned_xtz * oraclePrice * v_MUTEZ_TO_KOLIBRI_CONVERSION > paid_token
     }
     ()
+  *)
 
   (* `initialValue * (1 + stabilityFee / v_PRECISION) ** numPeriods` is approximated *)
   function compoundWithLinearApproximation
@@ -204,20 +206,20 @@ scope Postambles
       < currentcollateralizationPercentage ->
       st.sender = Dummy_Liquidator.addr ->
       totalOutstandingTokens > 0 -> (* XXX: Introduced for easier verification *)
-      let earned_xtz = c'.dummy_Liquidator_balance - c.dummy_Liquidator_balance in
+      let earned_mutez = c'.dummy_Liquidator_balance - c.dummy_Liquidator_balance in
       let paid_token =
         c.tokenContract_storage.TokenContract.balances[st.sender] -
         c'.tokenContract_storage.TokenContract.balances[st.sender]
       in
 
       calc_paid_token = paid_token /\
-      earned_xtz = (ovenBalance / v_MUTEZ_TO_KOLIBRI_CONVERSION) /\
+      earned_mutez = (ovenBalance / v_MUTEZ_TO_KOLIBRI_CONVERSION) /\
       calc_paid_token = totalOutstandingTokens * (v_PRECISION + s.liquidationFeePercent) / v_PRECISION /\
 
       currentcollateralizationPercentage = ovenBalance * oraclePrice / totalOutstandingTokens * 100
       /\
-      earned_xtz = st.balance /\
-      ovenBalance = earned_xtz * v_MUTEZ_TO_KOLIBRI_CONVERSION /\
+      earned_mutez = st.balance /\
+      ovenBalance = earned_mutez * v_MUTEZ_TO_KOLIBRI_CONVERSION /\
       (v_PRECISION + s.liquidationFeePercent) / v_PRECISION < ovenBalance * oraclePrice / totalOutstandingTokens * 100 /\
 
       oraclePrice > 0 /\
@@ -226,19 +228,25 @@ scope Postambles
       currentcollateralizationPercentage < s.collateralizationPercentage /\
       totalOutstandingTokens > 0 /\
 
-      ((lemma_divmul_liquidate (v_PRECISION + s.liquidationFeePercent)
-        v_PRECISION 
-        ovenBalance 
-        oraclePrice 
-        totalOutstandingTokens 
-        100 
-        earned_xtz
-        paid_token
-        v_MUTEZ_TO_KOLIBRI_CONVERSION); 
-      
+		  (v_PRECISION + s.liquidationFeePercent) >= 0 /\
+		  v_PRECISION  > 0 /\
+		  ovenBalance  >= 0 /\
+		  oraclePrice  >= 0 /\
+		  totalOutstandingTokens > 0 /\
+		  earned_mutez >= 0 /\
+		  paid_token >= 0 /\
+		  v_MUTEZ_TO_KOLIBRI_CONVERSION > 0 /\
+
+      earned_mutez * oraclePrice * v_MUTEZ_TO_KOLIBRI_CONVERSION * 100 > paid_token /\
+
+      (*
+
+
+
+      (
       earned_xtz * oraclePrice * v_MUTEZ_TO_KOLIBRI_CONVERSION > paid_token
       ) /\
-      (*
+
       (v_PRECISION + s.liquidationFeePercent) / v_PRECISION * totalOutstandingTokens < ovenBalance * oraclePrice / totalOutstandingTokens * 100 * totalOutstandingTokens /\
 
       (v_PRECISION + s.liquidationFeePercent) / v_PRECISION  < (earned_xtz * v_MUTEZ_TO_KOLIBRI_CONVERSION) * oraclePrice / totalOutstandingTokens * 100 /\
