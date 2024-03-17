@@ -133,10 +133,7 @@ scope Postambles
     c.tokenContract_storage.TokenContract.balances[ms.developerFundContractAddress] +
     c.tokenContract_storage.TokenContract.balances[ms.stabilityFundContractAddress]
 
-  function principle (c: ctx) : nat =
-    c.minter_storage.borrowedTokens + c.minter_storage.stabilityFeeTokens
-
-  predicate foo (st : step) (gp : gparam) (c : ctx) (c' : ctx) =
+  predicate liquidator_will_benefit (st : step) (gp : gparam) (c : ctx) (c' : ctx) =
     ((not c.minter_storage.isLiquidated) /\ c'.minter_storage.isLiquidated) ->
     match gp with
     | Gp'0liquidate'0unit () ->
@@ -147,69 +144,24 @@ scope Postambles
       in
       liquidatedCollateralizationPercentage < s.collateralizationPercentage /\
       (
-      (v_PRECISION + s.liquidationFeePercent) / v_PRECISION < liquidatedCollateralizationPercentage ->
-      st.sender = Dummy_Liquidator.addr ->
-      s.borrowedTokens > 0 -> (* Required to avoid division by 0 in computeCollateralizationPercentage *)
+        (* If `liquidatedCollateralizationPercentage` is high enough,
+           the amount of mutez earned is greater than the amount of kUSD tokens
+           whose exchange rate is `oraclePrice` *)
+        (v_PRECISION + s.liquidationFeePercent) / v_PRECISION < liquidatedCollateralizationPercentage ->
+        st.sender = Dummy_Liquidator.addr ->
+        s.borrowedTokens > 0 -> (* Required to avoid division by 0 in computeCollateralizationPercentage *)
 
-      let earned_mutez = c'.dummy_Liquidator_balance - c.dummy_Liquidator_balance in
-      let paid_token =
-        c.tokenContract_storage.TokenContract.balances[st.sender] -
-        c'.tokenContract_storage.TokenContract.balances[st.sender]
-      in
-
-      liquidatedCollateralizationPercentage > 0 /\
-
-		  (v_PRECISION + s.liquidationFeePercent) >= 0 /\
-
-      earned_mutez * oraclePrice * v_MUTEZ_TO_KOLIBRI_CONVERSION * 100 > paid_token /\
-      true)
-    | _ -> false
-    end
-
-  predicate bar (st : step) (gp : gparam) (c : ctx) (c' : ctx) =
-    ((not c.minter_storage.isLiquidated) /\ c'.minter_storage.isLiquidated) ->
-    match gp with
-    | Gp'0liquidate'0unit () ->
-        let liquidatedCollateralizationPercentage =
-          c'.minter_storage.liquidationCollateralizationPercentage
-        in
-        let s = c.minter_storage in
-        let ovenBalance = st.balance * v_MUTEZ_TO_KOLIBRI_CONVERSION in
-
-        let timeDeltaSeconds = st.now - s.lastInterestIndexUpdateTime in
-        let numPeriods = timeDeltaSeconds / v_SECONDS_PER_COMPOUND in
-        let newMinterInterestIndex =
-          compoundWithLinearApproximation s.interestIndex s.stabilityFee numPeriods
+        let earned_mutez = c'.dummy_Liquidator_balance - c.dummy_Liquidator_balance in
+        let paid_token =
+          c.tokenContract_storage.TokenContract.balances[st.sender] -
+          c'.tokenContract_storage.TokenContract.balances[st.sender]
         in
 
-        (* # Calculate newly accrued stability fees and determine total fees. *)
-        let accruedStabilityFeeTokens = calculateNewAccruedInterest
-          s.interestIndex
-          s.borrowedTokens
-          s.stabilityFeeTokens
-          newMinterInterestIndex
-        in
-        let newStabilityFeeTokens : nat = s.stabilityFeeTokens + accruedStabilityFeeTokens in
-        (* # Verify oven is under collateralized *)
-        let totalOutstandingTokens : nat = s.borrowedTokens + newStabilityFeeTokens in
-        let currentcollateralizationPercentage =
-          computeCollateralizationPercentage ovenBalance oraclePrice totalOutstandingTokens
-        in
-        currentcollateralizationPercentage < s.collateralizationPercentage /\
-        currentcollateralizationPercentage = liquidatedCollateralizationPercentage /\
-        true
-    | _ -> false
-    end
+        liquidatedCollateralizationPercentage > 0 /\
+        (v_PRECISION + s.liquidationFeePercent) >= 0 /\
 
-  predicate liquidator_will_benefit (_st : step) (gp : gparam) (c : ctx) (c' : ctx) =
-    ((not c.minter_storage.isLiquidated) /\ c'.minter_storage.isLiquidated) ->
-    match gp with
-    | Gp'0liquidate'0unit () ->
-        let liquidatedCollateralizationPercentage =
-          c'.minter_storage.liquidationCollateralizationPercentage
-        in
-        let s = c.minter_storage in
-        liquidatedCollateralizationPercentage < s.collateralizationPercentage
+        earned_mutez * oraclePrice * v_MUTEZ_TO_KOLIBRI_CONVERSION * 100 > paid_token
+      )
     | _ -> false
     end
 
@@ -243,9 +195,7 @@ scope Postambles
 
   predicate post_minter_inv (st : step) (gp : gparam) (c : ctx) (c' : ctx) =
     addr_inv c' /\ oven_trans c c' /\ oven_inv c' /\
-    foo st gp c c' /\
-    bar st gp c c' /\
-    (* liquidator_will_benefit st gp c c' /\ *)
+    liquidator_will_benefit st gp c c' /\
     true
 
   predicate pre_tokenContract_inv (_st : step) (_gp : gparam) (c : ctx) =
@@ -493,10 +443,11 @@ scope Minter
       (* # Liquidity Pool and Stability Fund can always liquidate, others must be below privateLiquidationFeePercentage *)
       let privateLiquidationRequirement = s.collateralizationPercentage - s.privateOwnerLiquidationThreshold in
       (
-(*
+        (* XXX: Following 2 patterns are future works *)
+        (*
         (liquidatorAddress = s.liquidityPoolContractAddress) || (* # sender is liquidity pool *)
         (liquidatorAddress = s.stabilityFundContractAddress) || (* # sender is stability fund *)
-*)
+        *)
         (currentcollateralizationPercentage < privateLiquidationRequirement) (* # sender is private and collateralization is below privateLiquidationFeePercentage *)
       ) /\
 
@@ -575,11 +526,3 @@ scope TokenContract
 
   end
 end
-
-(*
-
-
-
-
-
-*)
