@@ -10,40 +10,6 @@ scope Midambles
 
   function (/) (x : nat) (y : nat) : nat = div x y
 
-  let lemma_divmul1 (w x y : nat) : unit =
-    requires { x >= 0 /\ y > 0 /\ w <= x / y }
-    ensures { w * y <= x }
-    if w <= 0 then (
-      assert { w * y <= 0 }
-    ) else (
-      assert { w * y <= x / y * y };
-      assert { x / y * y <= x }
-    )
-  
-  (*
-  let lemma divmul_liquidate (
-    v_PRECISION_liquidationFeePercent
-    v_PRECISION 
-    ovenBalance 
-    oraclePrice 
-    totalOutstandingTokens 
-    v_100 
-    earned_xtz
-    paid_token
-    v_MUTEZ_TO_KOLIBRI_CONVERSION
-    : int) : unit =
-    requires {
-      v_PRECISION_liquidationFeePercent / v_PRECISION < ovenBalance * oraclePrice / totalOutstandingTokens * v_100 /\
-      earned_xtz = (ovenBalance / v_MUTEZ_TO_KOLIBRI_CONVERSION) /\
-      paid_token = totalOutstandingTokens * v_PRECISION_liquidationFeePercent / v_PRECISION /\
-      true
-    }
-    ensures {
-      earned_xtz * oraclePrice * v_MUTEZ_TO_KOLIBRI_CONVERSION > paid_token
-    }
-    ()
-  *)
-
   (* `initialValue * (1 + stabilityFee / v_PRECISION) ** numPeriods` is approximated *)
   function compoundWithLinearApproximation
     (initialValue : nat)
@@ -100,6 +66,9 @@ scope Midambles
     stabilityFeeTokens : nat;
     interestIndex : nat;
     lastInterestIndexUpdateTime : nat;
+
+    (* Parameter for verification purpose only *)
+    liquidationCollateralizationPercentage : nat;
   }
 
   function mintTokens
@@ -193,7 +162,7 @@ scope Postambles
       let currentcollateralizationPercentage =
         computeCollateralizationPercentage ovenBalance oraclePrice totalOutstandingTokens
       in
-      currentcollateralizationPercentage < s.collateralizationPercentage /\ 
+      currentcollateralizationPercentage < s.collateralizationPercentage /\
       (v_PRECISION + s.liquidationFeePercent) / v_PRECISION < s.collateralizationPercentage /\
       (
 
@@ -218,6 +187,7 @@ scope Postambles
 
       currentcollateralizationPercentage = ovenBalance * oraclePrice / totalOutstandingTokens * 100
       /\
+      c'.minter_storage.liquidationCollateralizationPercentage = currentcollateralizationPercentage /\
       earned_mutez = st.balance /\
       ovenBalance = earned_mutez * v_MUTEZ_TO_KOLIBRI_CONVERSION /\
       (v_PRECISION + s.liquidationFeePercent) / v_PRECISION < ovenBalance * oraclePrice / totalOutstandingTokens * 100 /\
@@ -306,7 +276,8 @@ scope Postambles
     end)
 
   predicate before_liquidate_inv (c : ctx) =
-    borrowedTokens_inv c
+    borrowedTokens_inv c /\
+    c.minter_storage.liquidationCollateralizationPercentage = 0
 
   predicate oven_inv (c : ctx) =
     let s = c.minter_storage in
@@ -612,6 +583,9 @@ scope Minter
         (* # Update internal state *)
         interestIndex = newMinterInterestIndex;
         lastInterestIndexUpdateTime = s.lastInterestIndexUpdateTime + numPeriods * v_SECONDS_PER_COMPOUND;
+
+        (* Parameter for verification purpose only *)
+        liquidationCollateralizationPercentage = currentcollateralizationPercentage;
       } /\
       ops = nops
   end
