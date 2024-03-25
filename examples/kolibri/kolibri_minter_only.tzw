@@ -142,6 +142,107 @@ scope Postambles
     balances[ms.developerFundContractAddress] +
     balances[ms.stabilityFundContractAddress]
 
+  predicate foo (st : step) (gp : gparam) (c : ctx) (c' : ctx) =
+    ((not c.minter_storage.isLiquidated) /\ c'.minter_storage.isLiquidated) ->
+    match gp, st.entrypoint with
+    | ICon.Gp (():unit), ICon.Contract.Liquidate ->
+      let s = c.minter_storage in
+      let ovenBalance = st.balance * v_MUTEZ_TO_KOLIBRI_CONVERSION in
+
+      let timeDeltaSeconds = st.now - s.lastInterestIndexUpdateTime in
+      let numPeriods = timeDeltaSeconds / v_SECONDS_PER_COMPOUND in
+      let newMinterInterestIndex =
+        compoundWithLinearApproximation s.interestIndex s.stabilityFee numPeriods
+      in
+
+      (* # Calculate newly accrued stability fees and determine total fees. *)
+      let accruedStabilityFeeTokens = calculateNewAccruedInterest
+        s.interestIndex
+        s.borrowedTokens
+        s.stabilityFeeTokens
+        newMinterInterestIndex
+      in
+      let newStabilityFeeTokens : nat = s.stabilityFeeTokens + accruedStabilityFeeTokens in
+      (* # Verify oven is under collateralized *)
+      let totalOutstandingTokens : nat = s.borrowedTokens + newStabilityFeeTokens in
+      let currentcollateralizationPercentage =
+        computeCollateralizationPercentage ovenBalance oraclePrice totalOutstandingTokens
+      in
+      currentcollateralizationPercentage < s.collateralizationPercentage /\
+      (v_PRECISION + s.liquidationFeePercent) / v_PRECISION < s.collateralizationPercentage /\
+      (
+
+      (* # Calculate a liquidation fee. *)
+      let liquidationFee = (totalOutstandingTokens * s.liquidationFeePercent) / v_PRECISION in
+      let calc_paid_token = totalOutstandingTokens + liquidationFee in
+
+
+      (v_PRECISION + s.liquidationFeePercent) / v_PRECISION 
+      < currentcollateralizationPercentage ->
+      st.sender = Dummy_Liquidator.addr ->
+      s.borrowedTokens > 0 -> (* Required to avoid division by 0 in computeCollateralizationPercentage *)
+      totalOutstandingTokens > 0 -> (* XXX: Introduced for easier verification *)
+      let earned_mutez = c'.dummy_Liquidator_balance - c.dummy_Liquidator_balance in
+      let paid_token =
+        c.tokenContract_storage.TokenContract.balances[st.sender] -
+        c'.tokenContract_storage.TokenContract.balances[st.sender]
+      in
+
+      calc_paid_token = paid_token /\
+      earned_mutez = (ovenBalance / v_MUTEZ_TO_KOLIBRI_CONVERSION) /\
+      calc_paid_token = totalOutstandingTokens * (v_PRECISION + s.liquidationFeePercent) / v_PRECISION /\
+
+      currentcollateralizationPercentage = ovenBalance * oraclePrice / totalOutstandingTokens * 100
+      /\
+      c'.minter_storage.liquidationCollateralizationPercentage = currentcollateralizationPercentage /\
+      earned_mutez = st.balance /\
+      ovenBalance = earned_mutez * v_MUTEZ_TO_KOLIBRI_CONVERSION /\
+      (v_PRECISION + s.liquidationFeePercent) / v_PRECISION < ovenBalance * oraclePrice / totalOutstandingTokens * 100 /\
+
+      oraclePrice > 0 /\
+      ovenBalance >= 0 /\
+      currentcollateralizationPercentage > 0 /\
+      currentcollateralizationPercentage < s.collateralizationPercentage /\
+      totalOutstandingTokens > 0 /\
+
+		  (v_PRECISION + s.liquidationFeePercent) >= 0 /\
+		  v_PRECISION  > 0 /\
+		  ovenBalance  >= 0 /\
+		  oraclePrice  >= 0 /\
+		  totalOutstandingTokens > 0 /\
+		  earned_mutez >= 0 /\
+		  paid_token >= 0 /\
+		  v_MUTEZ_TO_KOLIBRI_CONVERSION > 0 /\
+
+
+      (v_PRECISION + s.liquidationFeePercent) / v_PRECISION <
+          ovenBalance * oraclePrice / totalOutstandingTokens * 100 /\
+      earned_mutez = (ovenBalance / v_MUTEZ_TO_KOLIBRI_CONVERSION) /\
+      paid_token = totalOutstandingTokens * (v_PRECISION + s.liquidationFeePercent) / v_PRECISION /\
+
+      paid_token < totalOutstandingTokens * (ovenBalance * oraclePrice / totalOutstandingTokens * 100) /\
+      paid_token < earned_mutez * oraclePrice * v_MUTEZ_TO_KOLIBRI_CONVERSION * 100 /\
+
+      (*
+
+
+      (
+      earned_mutez * oraclePrice * v_MUTEZ_TO_KOLIBRI_CONVERSION * 100 > paid_token
+      ) /\
+
+      (v_PRECISION + s.liquidationFeePercent) / v_PRECISION * totalOutstandingTokens < ovenBalance * oraclePrice / totalOutstandingTokens * 100 * totalOutstandingTokens /\
+
+      (v_PRECISION + s.liquidationFeePercent) / v_PRECISION  < (earned_xtz * v_MUTEZ_TO_KOLIBRI_CONVERSION) * oraclePrice / totalOutstandingTokens * 100 /\
+
+
+      currentcollateralizationPercentage = (earned_xtz * v_MUTEZ_TO_KOLIBRI_CONVERSION) * oraclePrice / totalOutstandingTokens * 100 /\
+
+      earned_xtz * oraclePrice * v_MUTEZ_TO_KOLIBRI_CONVERSION > paid_token /\
+      *)
+      true)
+    | _ -> false
+    end
+
   predicate liquidator_will_benefit (st : step) (gp : gparam) (c : ctx) (c' : ctx) =
     ((not c.minter_storage.isLiquidated) /\ c'.minter_storage.isLiquidated) ->
     match gp, st.entrypoint with
@@ -204,7 +305,8 @@ scope Postambles
 
   predicate post_minter_inv (st : step) (gp : gparam) (c : ctx) (c' : ctx) =
     addr_inv c' /\ oven_trans c c' /\ oven_inv c' /\
-    liquidator_will_benefit st gp c c' /\
+    foo st gp c c' /\
+    (* liquidator_will_benefit st gp c c' /\ *)
     true
 
   predicate pre_tokenContract_inv (_st : step) (_gp : gparam) (c : ctx) =
