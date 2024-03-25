@@ -16,6 +16,21 @@ scope Preambles
     (stabilityFee : nat)
     (numPeriods : nat) : nat =
     (initialValue * (v_PRECISION + (numPeriods * stabilityFee))) / v_PRECISION
+  
+  let lemma interestindex_is_weakly_increasing
+    (initialValue : nat)
+    (stabilityFee : nat)
+    (numPeriods : nat) : unit
+    requires {
+      initialValue >= 0 /\
+      stabilityFee >= 0 /\
+      numPeriods >= 0
+    }
+    ensures {
+      compoundWithLinearApproximation initialValue stabilityFee numPeriods
+      >= initialValue
+    } =
+    ()
 
   function calculateNewAccruedInterest
     (ovenInterestIndex : nat)
@@ -29,6 +44,36 @@ scope Preambles
     let newTotalTokens = (ratio * totalPrinciple) / v_PRECISION in
     let newTokensAccruedAsFee = newTotalTokens - totalPrinciple in
     newTokensAccruedAsFee
+
+  let lemma totalOutstandingTokens_is_greaer_than_zero 
+    (ovenInterestIndex : nat)
+    (borrowedTokens : nat)
+    (stabilityFeeTokens : nat)
+    (minterInterestIndex  : nat) : unit
+    requires {
+      ovenInterestIndex > 0 /\
+      borrowedTokens > 0 /\
+      stabilityFeeTokens >= 0 /\
+      minterInterestIndex > 0 /\
+      minterInterestIndex >= ovenInterestIndex
+    }
+    ensures {
+      calculateNewAccruedInterest
+        ovenInterestIndex borrowedTokens stabilityFeeTokens minterInterestIndex
+      + stabilityFeeTokens + borrowedTokens > 0
+    }
+    =
+    let ratio =
+      (minterInterestIndex * v_PRECISION) / ovenInterestIndex
+    in
+    let totalPrinciple = borrowedTokens + stabilityFeeTokens in
+    let newTotalTokens = (ratio * totalPrinciple) / v_PRECISION in
+    let newTokensAccruedAsFee = newTotalTokens - totalPrinciple in
+    assert {
+      newTokensAccruedAsFee = calculateNewAccruedInterest
+        ovenInterestIndex borrowedTokens stabilityFeeTokens minterInterestIndex
+    };
+    ()
 
   function computeCollateralizationPercentage
     (ovenBalance : nat)
@@ -176,12 +221,26 @@ scope Postambles
       let liquidationFee = (totalOutstandingTokens * s.liquidationFeePercent) / v_PRECISION in
       let calc_paid_token = totalOutstandingTokens + liquidationFee in
 
-
-      (v_PRECISION + s.liquidationFeePercent) / v_PRECISION 
+      s.stabilityFeeTokens >= 0 /\
+      ((v_PRECISION + s.liquidationFeePercent) / v_PRECISION
       < currentcollateralizationPercentage ->
       st.sender = Dummy_Liquidator.addr ->
       s.borrowedTokens > 0 -> (* Required to avoid division by 0 in computeCollateralizationPercentage *)
-      totalOutstandingTokens > 0 -> (* XXX: Introduced for easier verification *)
+
+(*
+
+      s.interestIndex > 0 /\
+
+      minterInterestIndex > 0 /\
+      ovenInterestIndex > 0 /\
+      borrowedTokens > 0 /\
+      stabilityFeeTokens >= 0 /\
+      minterInterestIndex >= ovenInterestIndex
+
+      s.stabilityFeeTokens >= 0 /\
+      newStabilityFeeTokens >= 0 /\
+*)
+      (totalOutstandingTokens > 0 -> (* XXX: Introduced for easier verification *)
       let earned_mutez = c'.dummy_Liquidator_balance - c.dummy_Liquidator_balance in
       let paid_token =
         c.tokenContract_storage.TokenContract.balances[st.sender] -
@@ -214,32 +273,12 @@ scope Postambles
 		  paid_token >= 0 /\
 		  v_MUTEZ_TO_KOLIBRI_CONVERSION > 0 /\
 
-
-      (v_PRECISION + s.liquidationFeePercent) / v_PRECISION <
-          ovenBalance * oraclePrice / totalOutstandingTokens * 100 /\
-      earned_mutez = (ovenBalance / v_MUTEZ_TO_KOLIBRI_CONVERSION) /\
       paid_token = totalOutstandingTokens * (v_PRECISION + s.liquidationFeePercent) / v_PRECISION /\
 
       paid_token < totalOutstandingTokens * (ovenBalance * oraclePrice / totalOutstandingTokens * 100) /\
       paid_token < earned_mutez * oraclePrice * v_MUTEZ_TO_KOLIBRI_CONVERSION * 100 /\
 
-      (*
-
-
-      (
-      earned_mutez * oraclePrice * v_MUTEZ_TO_KOLIBRI_CONVERSION * 100 > paid_token
-      ) /\
-
-      (v_PRECISION + s.liquidationFeePercent) / v_PRECISION * totalOutstandingTokens < ovenBalance * oraclePrice / totalOutstandingTokens * 100 * totalOutstandingTokens /\
-
-      (v_PRECISION + s.liquidationFeePercent) / v_PRECISION  < (earned_xtz * v_MUTEZ_TO_KOLIBRI_CONVERSION) * oraclePrice / totalOutstandingTokens * 100 /\
-
-
-      currentcollateralizationPercentage = (earned_xtz * v_MUTEZ_TO_KOLIBRI_CONVERSION) * oraclePrice / totalOutstandingTokens * 100 /\
-
-      earned_xtz * oraclePrice * v_MUTEZ_TO_KOLIBRI_CONVERSION > paid_token /\
-      *)
-      true)
+      true)))
     | _ -> false
     end
 
@@ -286,6 +325,7 @@ scope Postambles
     s.devFundSplit = 100000000000000000 (* # 10% *) /\
     s.privateOwnerLiquidationThreshold = 20000000000000000000 (*  # 20% *) /\
     s.liquidationFeePercent = 80000000000000000 (* # 8% *) /\
+    s.stabilityFeeTokens >= 0 /\
     (if s.isLiquidated then true else before_liquidate_inv c)
 
   predicate oven_trans (c : ctx) (c' : ctx) =
