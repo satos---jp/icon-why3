@@ -54,7 +54,7 @@ sp.verify(collateralizationPercentage < self.data.collateralizationPercentage, m
 currentcollateralizationPercentage < s.collateralizationPercentage /\
 ```
 
-- In Icon, user can define functions used for the specifications in the `Preamble` scope, so the function declarations and applications can be converted without code duplication.
+- In iCon, user can define functions used for the specifications in the `Preamble` scope, so the function declarations and applications can be converted without code duplication.
 
 ```python title="minter.py"
 def compoundWithLinearApproximation(params):
@@ -73,7 +73,7 @@ function compoundWithLinearApproximation
   (initialValue * (v_PRECISION + (numPeriods * stabilityFee))) / v_PRECISION
 ```
 
-- In SmartPy, `sp.transfer` is a function call with side-effects that updates the current operation array. It is ported to Icon as updating the `ops` variable.
+- In SmartPy, `sp.transfer` is a function call with side-effects that updates the current operation array. It is ported to iCon as updating the `ops` variable.
 
 ```python title="minter.py"
 tokenContractParam = sp.record(address= address, value= tokensToMint)
@@ -93,7 +93,7 @@ It would be hard to port everything faithfully, so we simplified the code as fol
 - In the original code, many oven parameters can be updated with governance. This function is omitted.
 - In the original code, users originate their own `Oven`contract through the `makeOven` entrypoint. The actual oven logic is implemented in the `Minter` contract and it is called from the `Oven` contracts through the `OvenProxy` contract. This design enables updating the behaviour of the every ovens by updating the pointer to the `Minter` contract saved in the `OvenProxy` contract. We simplified them so that there is only one `Oven` contract which implements the oven logic.
 - In the original code, the parameter `oraclePrice`, the exchange rate between XTZ and USD, is retrieved from the `Oracle` contract. For simplicity, we defined the value as `function oraclePrice : nat` without restriction.
-- In Icon, there is no constraint that ensures the monotonicity of `now` for now. Though this constraint is not required for verifying the properties this time proved.
+- In iCon, there is no constraint that ensures the monotonicity of `now` for now. Though this constraint is not required for verifying the properties this time proved.
 
 ## Verified properties
 

@@ -1,6 +1,6 @@
 (* Based on https://github.com/Hover-Labs/kolibri-contracts/blob/master/smart_contracts/ *)
 
-scope Midambles
+scope Preambles
 
   constant v_SECONDS_PER_COMPOUND : nat = 60
 
@@ -76,7 +76,10 @@ scope Midambles
     (ops : list operation)
     (tokensToMint : nat)
     (ownerAddress : address) : list operation =
-    let ops = Cons (Xfer (Gp'0mint'0address4nat ownerAddress tokensToMint) 0 s.tokenContractaddr) ops in
+    let ops = Cons (Xfer
+        (ICon.Gp ((ownerAddress, tokensToMint) : (address, nat)))
+        0 s.tokenContractaddr ICon.Contract.Mint
+    ) ops in
     ops
 
   function mintTokensToStabilityAndDevFund
@@ -97,7 +100,10 @@ scope Midambles
     (ops : list operation)
     (tokensToBurn : nat)
     (address : address) : list operation =
-    let ops = Cons (Xfer (Gp'0burn'0address4nat address tokensToBurn) 0 s.tokenContractaddr) ops in
+    let ops = Cons (Xfer
+        (ICon.Gp ((address, tokensToBurn) : (address, nat)))
+        0 s.tokenContractaddr ICon.Contract.Burn
+    ) ops in
     ops
 
   type t_NatNatNat = NatNatNat nat nat nat
@@ -504,9 +510,9 @@ scope TokenContract
   scope Spec
 
     predicate mint (st : step)
-      (addr : address)
-      (value : nat)
+      (param : (address, nat))
       (s : storage) (ops : list operation) (s' : storage) =
+      let addr, value = param in
       st.sender = s.admin /\
       s' = { s with
         totalSupply = s.totalSupply + value;
@@ -516,9 +522,9 @@ scope TokenContract
       ops = Nil
 
     predicate burn (st : step)
-      (addr : address)
-      (value : nat)
+      (param : (address, nat))
       (s : storage) (ops : list operation) (s' : storage) =
+      let addr, value = param in
       st.sender = s.admin /\
       s.balances[addr] >= value /\
       s' = { s with
