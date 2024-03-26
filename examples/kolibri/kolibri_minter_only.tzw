@@ -54,7 +54,6 @@ scope Preambles
       ovenInterestIndex > 0 /\
       borrowedTokens > 0 /\
       stabilityFeeTokens >= 0 /\
-      minterInterestIndex > 0 /\
       minterInterestIndex >= ovenInterestIndex
     }
     ensures {
@@ -193,7 +192,7 @@ scope Postambles
     | ICon.Gp (():unit), ICon.Contract.Liquidate ->
       let s = c.minter_storage in
       let ovenBalance = st.balance * v_MUTEZ_TO_KOLIBRI_CONVERSION in
-
+      st.now >= s.lastInterestIndexUpdateTime ->
       let timeDeltaSeconds = st.now - s.lastInterestIndexUpdateTime in
       let numPeriods = timeDeltaSeconds / v_SECONDS_PER_COMPOUND in
       let newMinterInterestIndex =
@@ -227,8 +226,17 @@ scope Postambles
       st.sender = Dummy_Liquidator.addr ->
       s.borrowedTokens > 0 -> (* Required to avoid division by 0 in computeCollateralizationPercentage *)
 
+
 (*
 
+      s.borrowedTokens > 0 /\
+
+      totalOutstandingTokens > 0 /\
+      s.stabilityFeeTokens >= 0 /\
+      newMinterInterestIndex >= s.interestIndex /\
+
+
+      totalOutstandingTokens > 0  /\
       s.interestIndex > 0 /\
 
       minterInterestIndex > 0 /\
